@@ -1,62 +1,142 @@
 `timescale 1ns / 1ps
 
-module tb_multiplier;
+// Testbench for 16-bit multipliers (Wallace Tree and Array Multiplier)
+// Supports both pipelined (Wallace) and combinational (Array) multipliers
+module wallace_multiplier_16bit_tb;
+  reg clock;
+  reg reset;
+  reg [15:0] operand_a, operand_b;
+  wire [31:0] result_wallace;
+  wire [31:0] result_array;
 
-    reg  [15:0] a, b;
-    wire [31:0] product;
-    reg  [31:0] expected;
+  integer total_tests;
+  integer passed_tests;
+  integer failed_tests;
 
-    // ============================================================
-    // CHANGE THIS LINE TO SWITCH BETWEEN DESIGNS
-    // ------------------------------------------------------------
-    array_multiplier_cla DUT (.a(a), .b(b), .product(product));
-    // wallace_multiplier   DUT (.a(a), .b(b), .product(product));
-    // ============================================================
+  // Wallace Tree Multiplier: Pipelined design with 6 pipeline stages
+  // Requires clock and reset signals
+  wallace_multiplier_16bit uut_wallace (
+    .clk(clock),
+    .rst(reset),
+    .multiplicand(operand_a),
+    .multiplier(operand_b),
+    .result(result_wallace)
+  );
 
+  // Array Multiplier: Combinational design, no clock/reset needed
+  // Uncomment to test array multiplier instead:
+  // array_multiplier_cla uut_array (
+  //   .a(operand_a),
+  //   .b(operand_b),
+  //   .product(result_array)
+  // );
 
-    // Task to apply test vectors
-    task apply_test;
-        input [15:0] A;
-        input [15:0] B;
+  // Clock generation: 10ns period (100 MHz)
+  initial begin
+    clock = 0;
+    forever #5 clock = ~clock;
+  end
+
+  // Test task: Validates multiplication for both multiplier types
+  // use_wallace: 1 for Wallace (pipelined), 0 for Array (combinational)
+  task test_mult;
+    input [15:0] val_a;
+    input [15:0] val_b;
+    input use_wallace;
+    reg [31:0] expected_result;
+    reg [31:0] actual_result;
     begin
-        a = A;
-        b = B;
-        expected = A * B;   // golden reference model (behavioral)
-
-        #10; // allow time for output to settle
-
-        if (product !== expected)
-            $display("❌ FAIL  | A = %6d  B = %6d  | Expected = %10d  Got = %10d",
-                      A, B, expected, product);
-        else
-            $display("✅ PASS  | A = %6d  B = %6d  | Product  = %10d (0x%h)",
-                      A, B, product, product);
+      total_tests = total_tests + 1;
+      expected_result = val_a * val_b;
+      
+      // Apply inputs on clock edge
+      @(posedge clock);
+      operand_a <= val_a;
+      operand_b <= val_b;
+      
+      if (use_wallace) begin
+        // Wallace multiplier has 6 pipeline stages - wait for result
+        repeat(6) @(posedge clock);
+        actual_result = result_wallace;
+      end else begin
+        // Array multiplier is combinational - result available after propagation delay
+        #10;
+        actual_result = result_array;
+      end
+      
+      // Compare actual result with expected
+      if (actual_result === expected_result) begin
+        $display("PASS: %d x %d = %d", val_a, val_b, actual_result);
+        passed_tests = passed_tests + 1;
+      end else begin
+        $display("FAIL: %d x %d = %d (expected %d)", val_a, val_b, actual_result, expected_result);
+        failed_tests = failed_tests + 1;
+      end
     end
-    endtask
+  endtask
 
-
-
-    initial begin
-        $display("\n========== MULTIPLIER TESTBENCH START ==========\n");
-
-        // -------- EXACTLY 15 TEST CASES --------
-        apply_test(16'd0,       16'd0);      // 1
-        apply_test(16'd1,       16'd1);      // 2
-        apply_test(16'd3,       16'd7);      // 3
-        apply_test(16'd10,      16'd20);     // 4
-        apply_test(16'd15,      16'd15);     // 5
-        apply_test(16'd25,      16'd40);     // 6
-        apply_test(16'd100,     16'd200);    // 7
-        apply_test(16'd255,     16'd255);    // 8
-        apply_test(16'd999,     16'd111);    // 9
-        apply_test(16'd1234,    16'd5678);   // 10
-        apply_test(16'd32767,   16'd2);      // 11 (near max positive)
-        apply_test(16'hFFFF,    16'd1);      // 12 (max * 1)
-        apply_test(16'hFFFF,    16'hFFFF);   // 13 (max * max)
-        apply_test(16'd5555,    16'd3333);   // 14
-        apply_test(16'd42,      16'd73);     // 15
-
-        $display("\n========== TESTBENCH COMPLETE ==========\n");
-        $stop;
+  // Main test sequence
+  initial begin
+    // Initialize counters and signals
+    total_tests = 0;
+    passed_tests = 0;
+    failed_tests = 0;
+    reset = 1;
+    operand_a = 0;
+    operand_b = 0;
+    
+    // Reset period
+    #100;
+    reset = 0;
+    #100;
+    
+    $display("Starting Multiplier Tests...");
+    $display("Testing Wallace Tree Multiplier (pipelined)...\n");
+    
+    // Test cases covering edge cases and various ranges
+    test_mult(16'd0, 16'd0, 1);           // Zero case
+    test_mult(16'd1, 16'd1, 1);           // Minimum non-zero
+    test_mult(16'd3, 16'd7, 1);           // Small values
+    test_mult(16'd50, 16'd200, 1);        // Medium values
+    test_mult(16'd128, 16'd255, 1);       // Power of 2 and max byte
+    test_mult(16'd500, 16'd2000, 1);      // Larger values
+    test_mult(16'd2000, 16'd3000, 1);     // Different pair
+    test_mult(16'd25000, 16'd50000, 1);  // Large values
+    test_mult(16'd65535, 16'd1, 1);       // Max with 1
+    test_mult(16'd65535, 16'd65535, 1);   // Max x Max
+    test_mult(16'd42, 16'd17, 1);         // Additional test
+    test_mult(16'd1024, 16'd4096, 1);     // Power of 2 values
+    test_mult(16'd12345, 16'd54321, 1);   // Additional large test
+    
+    // Uncomment below to test Array Multiplier (combinational)
+    // $display("\nTesting Array Multiplier (combinational)...\n");
+    // test_mult(16'd0, 16'd0, 0);
+    // test_mult(16'd1, 16'd1, 0);
+    // test_mult(16'd3, 16'd7, 0);
+    // test_mult(16'd50, 16'd200, 0);
+    // test_mult(16'd128, 16'd255, 0);
+    // test_mult(16'd500, 16'd2000, 0);
+    // test_mult(16'd2000, 16'd3000, 0);
+    // test_mult(16'd25000, 16'd50000, 0);
+    // test_mult(16'd65535, 16'd1, 0);
+    // test_mult(16'd65535, 16'd65535, 0);
+    // test_mult(16'd42, 16'd17, 0);
+    // test_mult(16'd1024, 16'd4096, 0);
+    // test_mult(16'd12345, 16'd54321, 0);
+    
+    // Print test summary
+    $display("\nTest Summary:");
+    $display("Total:  %0d", total_tests);
+    $display("Passed: %0d", passed_tests);
+    $display("Failed: %0d", failed_tests);
+    
+    if (failed_tests == 0) begin
+      $display("ALL TESTS PASSED!");
+    end else begin
+      $display("SOME TESTS FAILED!");
     end
+    
+    #100;
+    $finish;
+  end
 endmodule

@@ -1,6 +1,15 @@
-// ============================================================
-// Partial Full Adder Module (moved to top)
-// ============================================================
+// ============================================================================
+// 16-bit Pipelined Wallace Tree Multiplier
+// ============================================================================
+// Architecture: 3-stage pipeline
+//   Stage 1: Partial product generation (16 partial products)
+//   Stage 2: Wallace tree reduction using 4-to-2 compressors (3 levels)
+//   Stage 3: Final addition using 32-bit CLA
+// Pipeline depth: 6 clock cycles total
+// ============================================================================
+
+// Partial Full Adder: Computes sum and generates propagate/generate signals
+// Used as building block for Carry Lookahead Adders
 module partial_full_adder (
     input  wire in_a,
     input  wire in_b,
@@ -14,9 +23,8 @@ module partial_full_adder (
     assign generate_out = in_a & in_b;
 endmodule
 
-// ============================================================
-// 4-bit Carry Lookahead Adder (basic CLA block)
-// ============================================================
+// 4-bit Carry Lookahead Adder: Fast addition using carry lookahead logic
+// Computes all carries in parallel to reduce propagation delay
 module carry_look_ahead_4bit (
     input  wire [3:0] operand_a,
     input  wire [3:0] operand_b,
@@ -29,12 +37,13 @@ module carry_look_ahead_4bit (
     wire [3:0] prop, gen;
     wire carry1, carry2, carry3;
 
+    // Generate propagate and generate signals for each bit position
     partial_full_adder PFA1 (.in_a(operand_a[0]), .in_b(operand_b[0]), .carry_in(carry_in), .sum_out(sum_out[0]), .propagate(prop[0]), .generate_out(gen[0]));
     partial_full_adder PFA2 (.in_a(operand_a[1]), .in_b(operand_b[1]), .carry_in(carry1),  .sum_out(sum_out[1]), .propagate(prop[1]), .generate_out(gen[1]));
     partial_full_adder PFA3 (.in_a(operand_a[2]), .in_b(operand_b[2]), .carry_in(carry2),  .sum_out(sum_out[2]), .propagate(prop[2]), .generate_out(gen[2]));
     partial_full_adder PFA4 (.in_a(operand_a[3]), .in_b(operand_b[3]), .carry_in(carry3),  .sum_out(sum_out[3]), .propagate(prop[3]), .generate_out(gen[3]));
 
-    // Alternative carry computation using different grouping
+    // Carry lookahead: Compute carries in parallel using propagate and generate
     assign carry1   = gen[0] | (prop[0] & carry_in);
     assign carry2   = gen[1] | (prop[1] & gen[0]) | (prop[1] & prop[0] & carry_in);
     assign carry3   = gen[2] | (prop[2] & gen[1]) | (prop[2] & prop[1] & gen[0]) | (prop[2] & prop[1] & prop[0] & carry_in);
@@ -42,14 +51,14 @@ module carry_look_ahead_4bit (
                   (prop[3] & prop[2] & prop[1] & gen[0]) |
                   (prop[3] & prop[2] & prop[1] & prop[0] & carry_in);
 
+    // Group propagate and generate for hierarchical CLA construction
     assign prop_group = &prop;
     assign gen_group = gen[3] | (prop[3] & gen[2]) | (prop[3] & prop[2] & gen[1]) |
                      (prop[3] & prop[2] & prop[1] & gen[0]);
 endmodule
 
-// ============================================================
-// 32-bit Carry Lookahead Adder (8 × 4-bit blocks)
-// ============================================================
+// 32-bit Carry Lookahead Adder: Built from 8 cascaded 4-bit CLA blocks
+// Uses hierarchical carry lookahead for fast 32-bit addition
 module carry_look_ahead_32bit (
     input  wire [31:0] input_a,
     input  wire [31:0] input_b,
@@ -61,6 +70,7 @@ module carry_look_ahead_32bit (
     wire [8:0] carry_block;
     assign carry_block[0] = carry_in;
 
+    // Generate 8 instances of 4-bit CLA blocks
     genvar idx;
     generate
         for (idx = 0; idx < 8; idx = idx + 1) begin : CLA_4BIT_GEN
@@ -74,6 +84,7 @@ module carry_look_ahead_32bit (
                 .gen_group(gen_group[idx])
             );
 
+            // Compute inter-block carry using group propagate and generate
             assign carry_block[idx+1] = gen_group[idx] | (prop_group[idx] & carry_block[idx]);
         end
     endgenerate
@@ -81,9 +92,9 @@ module carry_look_ahead_32bit (
     assign carry_out = carry_block[8];
 endmodule
 
-// ============================================================
-// 4-to-2 Compressor Module (restructured with alternative logic)
-// ============================================================
+// 4-to-2 Compressor: Reduces 4 inputs to 2 outputs (sum and carry)
+// Used in Wallace tree to reduce number of partial products efficiently
+// Algorithm: Compresses 4 numbers into sum and shifted carry
 module compressor_4to2(
     input  wire [31:0] in1,
     input  wire [31:0] in2,
@@ -92,27 +103,26 @@ module compressor_4to2(
     output wire [31:0] sum_out,
     output wire [31:0] carry_out
 );
-    // Alternative approach: compute in stages with different grouping
     wire [31:0] xor_12;
     wire [31:0] and_12, and_13, and_23;
     wire [31:0] temp_sum1, temp_carry1;
     wire [31:0] shifted_carry1;
     wire [31:0] temp_sum2, temp_carry2;
     
-    // First stage: XOR and AND operations on pairs
+    // Stage 1: Process first two inputs
     assign xor_12 = in1 ^ in2;
     assign and_12 = in1 & in2;
     assign and_13 = in1 & in3;
     assign and_23 = in2 & in3;
     
-    // Combine first three inputs (equivalent to original logic)
-    assign temp_sum1 = xor_12 ^ in3;  // Same as in1 ^ in2 ^ in3
-    assign temp_carry1 = and_12 | and_13 | and_23;  // Same as (in1&in2)|(in1&in3)|(in2&in3)
+    // Combine first three inputs: sum = XOR of all three, carry = majority function
+    assign temp_sum1 = xor_12 ^ in3;
+    assign temp_carry1 = and_12 | and_13 | and_23;
     
-    // Shift carry for next stage
+    // Shift carry left for next stage (carry is one position higher)
     assign shifted_carry1 = temp_carry1 << 1;
     
-    // Second stage: combine with in4 and shifted carry
+    // Stage 2: Combine with fourth input and shifted carry
     assign temp_sum2 = temp_sum1 ^ in4 ^ shifted_carry1;
     assign temp_carry2 = (temp_sum1 & in4) | (temp_sum1 & shifted_carry1) | (in4 & shifted_carry1);
     
@@ -120,9 +130,8 @@ module compressor_4to2(
     assign carry_out = temp_carry2 << 1;
 endmodule
 
-// ============================================================
-// 16-bit Pipelined Wallace Multiplier (restructured)
-// ============================================================
+// Main Wallace Tree Multiplier Module
+// Implements pipelined 16x16 bit multiplication using Wallace tree reduction
 module wallace_multiplier_16bit(
     input  wire        clk,
     input  wire        rst,
@@ -130,27 +139,29 @@ module wallace_multiplier_16bit(
     input  wire [15:0] multiplier,
     output reg  [31:0] result
 );
-    // -------------------------------
-    // Stage 1: Partial Product Generation (alternative approach)
-    // -------------------------------
+    // ========================================================================
+    // STAGE 1: Partial Product Generation
+    // ========================================================================
+    // Generate 16 partial products by ANDing each multiplier bit with
+    // multiplicand and shifting appropriately
     wire bit_products [15:0][15:0];
     wire [31:0] partial_prod [15:0];
     
     genvar row_idx, col_idx;
     generate
-        // Generate bit-wise products first
+        // Generate bit-wise products: AND each multiplier bit with each multiplicand bit
         for (row_idx = 0; row_idx < 16; row_idx = row_idx + 1) begin : BIT_PRODUCT_GEN
             for (col_idx = 0; col_idx < 16; col_idx = col_idx + 1) begin : BIT_AND
                 assign bit_products[row_idx][col_idx] = multiplicand[col_idx] & multiplier[row_idx];
             end
         end
         
-        // Then form partial products by shifting
+        // Form partial products: Each row is shifted left by its row index
         for (row_idx = 0; row_idx < 16; row_idx = row_idx + 1) begin : PARTIAL_PROD_GEN
             wire [31:0] extended_row;
             wire [15:0] row_bits;
             genvar bit_idx;
-            // Concatenate bits into a row using generate
+            // Concatenate bits into a row
             for (bit_idx = 0; bit_idx < 16; bit_idx = bit_idx + 1) begin : ROW_BITS
                 assign row_bits[bit_idx] = bit_products[row_idx][bit_idx];
             end
@@ -159,7 +170,7 @@ module wallace_multiplier_16bit(
         end
     endgenerate
 
-    // Pipeline register for partial products
+    // Pipeline register: Store partial products for next stage
     reg [31:0] partial_prod_reg [15:0];
     integer reg_idx;
     always @(posedge clk or posedge rst) begin
@@ -172,15 +183,16 @@ module wallace_multiplier_16bit(
         end
     end
 
-    // -------------------------------
-    // Stage 2: Wallace Tree Reduction (restructured)
-    // -------------------------------
-    // Level 1: Compress 16 partial products into 8 (4 compressors)
+    // ========================================================================
+    // STAGE 2: Wallace Tree Reduction (3 levels of compression)
+    // ========================================================================
+    // Level 1: Compress 16 partial products into 8 (using 4 compressors)
     wire [31:0] stage1_sum [3:0];
     wire [31:0] stage1_carry [3:0];
 
     genvar comp_idx;
     generate
+        // Each compressor takes 4 partial products and produces sum + carry
         for (comp_idx = 0; comp_idx < 4; comp_idx = comp_idx + 1) begin : LEVEL1_COMPRESS
             compressor_4to2 comp_l1 (
                 .in1(partial_prod_reg[comp_idx*4]),
@@ -193,7 +205,7 @@ module wallace_multiplier_16bit(
         end
     endgenerate
 
-    // Pipeline registers for level1 outputs
+    // Pipeline register for level 1 outputs
     reg [31:0] stage1_sum_reg [3:0];
     reg [31:0] stage1_carry_reg [3:0];
     always @(posedge clk or posedge rst) begin
@@ -210,7 +222,7 @@ module wallace_multiplier_16bit(
         end
     end
 
-    // Level 2: Compress 8 values (4 sums + 4 carries) into 4 (2 compressors)
+    // Level 2: Compress 8 values (4 sums + 4 carries) into 4 (using 2 compressors)
     wire [31:0] stage2_sum [1:0];
     wire [31:0] stage2_carry [1:0];
 
@@ -232,7 +244,7 @@ module wallace_multiplier_16bit(
         .carry_out(stage2_carry[1])
     );
 
-    // Pipeline registers for level2
+    // Pipeline register for level 2 outputs
     reg [31:0] stage2_sum_reg [1:0];
     reg [31:0] stage2_carry_reg [1:0];
     always @(posedge clk or posedge rst) begin
@@ -249,7 +261,7 @@ module wallace_multiplier_16bit(
         end
     end
 
-    // Level 3: Compress 4 values (2 sums + 2 carries) into 2 (1 compressor)
+    // Level 3: Compress 4 values (2 sums + 2 carries) into 2 (using 1 compressor)
     wire [31:0] stage3_sum;
     wire [31:0] stage3_carry;
     compressor_4to2 comp_l3 (
@@ -261,6 +273,7 @@ module wallace_multiplier_16bit(
         .carry_out(stage3_carry)
     );
 
+    // Pipeline register for level 3 outputs
     reg [31:0] stage3_sum_reg;
     reg [31:0] stage3_carry_reg;
     always @(posedge clk or posedge rst) begin
@@ -273,9 +286,10 @@ module wallace_multiplier_16bit(
         end
     end
 
-    // -------------------------------
-    // Stage 3: Final Addition
-    // -------------------------------
+    // ========================================================================
+    // STAGE 3: Final Addition
+    // ========================================================================
+    // Add the final sum and carry using 32-bit CLA to get the product
     wire [31:0] final_output;
 
     carry_look_ahead_32bit cla_final (
@@ -286,6 +300,7 @@ module wallace_multiplier_16bit(
         .carry_out()
     );
     
+    // Pipeline register for final result
     always @(posedge clk or posedge rst) begin
         if (rst)
             result <= 32'd0;
