@@ -1,7 +1,6 @@
 `timescale 1ns / 1ps
 
 // Testbench for 16-bit multipliers (Wallace Tree and Array Multiplier)
-// Supports both pipelined (Wallace) and combinational (Array) multipliers
 module wallace_multiplier_16bit_tb;
   reg clock;
   reg reset;
@@ -13,8 +12,7 @@ module wallace_multiplier_16bit_tb;
   integer passed_tests;
   integer failed_tests;
 
-  // Wallace Tree Multiplier: Pipelined design with 6 pipeline stages
-  // Requires clock and reset signals
+
   wallace_multiplier_16bit uut_wallace (
     .clk(clock),
     .rst(reset),
@@ -37,8 +35,6 @@ module wallace_multiplier_16bit_tb;
     forever #5 clock = ~clock;
   end
 
-  // Test task: Validates multiplication for both multiplier types
-  // use_wallace: 1 for Wallace (pipelined), 0 for Array (combinational)
   task test_mult;
     input [15:0] val_a;
     input [15:0] val_b;
@@ -49,22 +45,18 @@ module wallace_multiplier_16bit_tb;
       total_tests = total_tests + 1;
       expected_result = val_a * val_b;
       
-      // Apply inputs on clock edge
       @(posedge clock);
       operand_a <= val_a;
       operand_b <= val_b;
       
       if (use_wallace) begin
-        // Wallace multiplier has 6 pipeline stages - wait for result
         repeat(6) @(posedge clock);
         actual_result = result_wallace;
       end else begin
-        // Array multiplier is combinational - result available after propagation delay
         #10;
         actual_result = result_array;
       end
       
-      // Compare actual result with expected
       if (actual_result === expected_result) begin
         $display("PASS: %d x %d = %d", val_a, val_b, actual_result);
         passed_tests = passed_tests + 1;
@@ -77,7 +69,6 @@ module wallace_multiplier_16bit_tb;
 
   // Main test sequence
   initial begin
-    // Initialize counters and signals
     total_tests = 0;
     passed_tests = 0;
     failed_tests = 0;
@@ -85,7 +76,6 @@ module wallace_multiplier_16bit_tb;
     operand_a = 0;
     operand_b = 0;
     
-    // Reset period
     #100;
     reset = 0;
     #100;
@@ -108,7 +98,7 @@ module wallace_multiplier_16bit_tb;
     test_mult(16'd1024, 16'd4096, 1);     // Power of 2 values
     test_mult(16'd12345, 16'd54321, 1);   // Additional large test
     
-    // Uncomment below to test Array Multiplier (combinational)
+    // Uncomment  to test Array Multiplier (combinational)
     // $display("\nTesting Array Multiplier (combinational)...\n");
     // test_mult(16'd0, 16'd0, 0);
     // test_mult(16'd1, 16'd1, 0);
